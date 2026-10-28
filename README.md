@@ -275,7 +275,7 @@ These may sit at the top level (preferred) or under a legacy nested `auto:` bloc
 |---|---|---|
 | `fill_mode_open` | `mid` (default) or `bid` | STO credit: mid, or bid (worse credit). |
 | `fill_mode_close` | `mid` (default) or `ask` | BTC debit: mid, or ask (worse debit). |
-| `close_fill_ms` | `0`–`5000` (default `250`) | Simulated close fill delay in milliseconds. |
+| `close_fill_ms` | `0`–`5000` (default `250`) | Automatic replay close delay, including Auto Drop with Use Config off. Fill on the first tape second at/after the deadline, using quotes available then; `0` fills on the trigger. Pending closes survive playhead advances. |
 
 ### Picks
 

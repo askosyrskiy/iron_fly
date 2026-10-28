@@ -54,7 +54,7 @@ from iron_fly.quotes.replay import (
 from iron_fly.quotes.symbols import spxw_symbol
 from iron_fly.strategy.book import FlyBook
 from iron_fly.strategy.config_state import ConfigState, apply_config_state, pick_is_on, slippage_now
-from iron_fly.strategy.dale_og import DaleOg
+from iron_fly.strategy.dale_og import TRADE_STOP, DaleOg
 from iron_fly.strategy.rules import (
     REGIME_LABELS,
     REGIME_MODES,
@@ -890,6 +890,9 @@ def _stock_spec(text: str) -> bool:
         stock = parse_spec(stock_text)
     except ValueError:
         return False
+    # An explicit delay override is not an old stock configuration to upgrade.
+    if saved.close_fill_ms != stock.close_fill_ms:
+        return False
     saved_auto = dict(saved.auto)
     for key, value in stock.auto.items():
         saved_auto.setdefault(key, value)
@@ -1119,6 +1122,7 @@ def clear_flies(conn: sqlite3.Connection) -> None:
         "(SELECT book_day FROM desk_state WHERE player_id = ?)", (_pid(), _pid()),
     )
     forget_policy(_pid())
+    conn.execute("DELETE FROM replay_pending_close WHERE player_id = ?", (_pid(),))
     conn.execute(
         "UPDATE desk_state SET applied_at = NULL, regime_latch = NULL, open_conflict = NULL WHERE player_id = ?",
         (_pid(),),
@@ -1220,6 +1224,7 @@ def _archive_flies(conn: sqlite3.Connection, session_day: str) -> int:
         (session_day, pid),
     )
     deleted = conn.execute("DELETE FROM fly WHERE player_id = ?", (pid,)).rowcount
+    conn.execute("DELETE FROM replay_pending_close WHERE player_id = ?", (pid,))
     conn.execute("DELETE FROM leftover_long WHERE player_id = ?", (pid,))
     conn.execute("DELETE FROM leftover_roll WHERE player_id = ?", (pid,))
     conn.execute("DELETE FROM desk_event WHERE player_id = ?", (pid,))
@@ -1540,7 +1545,10 @@ def replay_until(conn: sqlite3.Connection, settings: Settings, day: date, until:
         log.info("step %s stop already applied through %s", _clock_text(until), _clock_text(applied))
         return until
     marks = load_day_tape(settings, day)
-    spec = _saved_spec(conn) if engine["use_config"] else None
+    saved_spec = _saved_spec(conn)
+    # Fill pricing applies to Auto Drop even when YAML strategy rules are off.
+    delay_ms = saved_spec.close_fill_ms if saved_spec is not None else 0
+    spec = saved_spec if engine["use_config"] else None
     # YAML is fixed for this walk. Parsing it again on every leftover second dominated the backtest.
     leftover_rules = spec.auto if spec is not None else _leftover_auto(conn)
     book = FlyBook() if rebuild else saved
@@ -1613,6 +1621,7 @@ def replay_until(conn: sqlite3.Connection, settings: Settings, day: date, until:
                 log.info("step %s sold %s leftover longs", clock, sold)
         strategy.on_quote(Quote(symbol="SPX", last=float(point["value"]), ts=ts))
         wings = None if width_choice == "auto" else int(width_choice)
+        _fill_due_replay_closes(conn, settings, day, strategy, ts, wings or wings_for_clock(wall))
         intents = strategy.decide(float(point["value"]), ts, wings=wings)
         signature = (
             point.get("value"),
@@ -1647,7 +1656,9 @@ def replay_until(conn: sqlite3.Connection, settings: Settings, day: date, until:
                 log.info("step %s decision %s %s blocked %s", clock, intent.kind.value, strike, intent.reason)
                 continue
             log.info("step %s decision %s %s %s", clock, intent.kind.value, strike, intent.reason)
-            _fill_intent(conn, settings, day, strategy, intent, ts, wings or wings_for_clock(wall))
+            _dispatch_replay_intent(
+                conn, settings, day, strategy, intent, ts, wings or wings_for_clock(wall), delay_ms
+            )
             if getattr(strategy, "opens_paused", False):
                 engine["auto_open"] = False
         walked += 1
@@ -1671,6 +1682,51 @@ def replay_until(conn: sqlite3.Connection, settings: Settings, day: date, until:
     else:
         resolve_engine(conn, book_clock(until))
     return until
+
+
+def _dispatch_replay_intent(conn, settings, day, strategy, intent, ts, wings, delay_ms):
+    """Queue closes without reading any future quote; opens and zero delay fill now."""
+    if intent.kind is not IntentKind.CLOSE or delay_ms <= 0:
+        return _fill_intent(conn, settings, day, strategy, intent, ts, wings)
+    if intent.reason == "flatten_at":
+        pause_auto_open(conn)
+        strategy.opens_paused = True
+        for fly in strategy.book.active():
+            one = Intent(IntentKind.CLOSE, "flatten", {"strike": fly.strike, "wings": fly.wings})
+            _dispatch_replay_intent(conn, settings, day, strategy, one, ts, wings, delay_ms)
+        return False
+    fly = _active_fly(strategy.book, float(intent.payload["strike"]))
+    if fly is None:
+        return False
+    conn.execute(
+        "INSERT OR IGNORE INTO replay_pending_close "
+        "(player_id, strike, opened_at, due_at, reason, wings) VALUES (?, ?, ?, ?, ?, ?)",
+        (_pid(), fly.strike, fly.opened_at.isoformat(),
+         (ts + timedelta(milliseconds=delay_ms)).isoformat(), intent.reason, fly.wings),
+    )
+    return False
+
+
+def _fill_due_replay_closes(conn, settings, day, strategy, ts, wings):
+    rows = conn.execute(
+        "SELECT * FROM replay_pending_close WHERE player_id = ? ORDER BY due_at, strike", (_pid(),)
+    ).fetchall()
+    for row in rows:
+        key = (_pid(), row["strike"], row["opened_at"])
+        fly = _active_fly(strategy.book, float(row["strike"]))
+        stale = fly is None or fly.opened_at.isoformat() != row["opened_at"]
+        if stale or book_clock(ts) >= TRADE_STOP:
+            conn.execute(
+                "DELETE FROM replay_pending_close WHERE player_id = ? AND strike = ? AND opened_at = ?", key
+            )
+            continue
+        if ts < datetime.fromisoformat(row["due_at"]):
+            continue
+        intent = Intent(IntentKind.CLOSE, row["reason"], {"strike": row["strike"], "wings": row["wings"]})
+        if _fill_intent(conn, settings, day, strategy, intent, ts, wings):
+            conn.execute(
+                "DELETE FROM replay_pending_close WHERE player_id = ? AND strike = ? AND opened_at = ?", key
+            )
 
 
 def _applied_at(conn: sqlite3.Connection) -> datetime | None:

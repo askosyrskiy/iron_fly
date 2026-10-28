@@ -1,11 +1,11 @@
 2026-10-22  Desk auto · F1 15:40 · wings 20 · ±2.5 / 5 · stop 3 · 2 picks · fill bid/ask · open EM 34.6
-  15:40:00 15:50:44  7645  wings 20  sto 9.05  em   10.1  em%  29.2  pnl -276
-  15:45:11 15:51:16  7650  wings 20  sto 8.40  em    9.6  em%  27.7  pnl -349
-  15:46:54 15:50:13  7640  wings 20  sto 8.30  em   9.35  em%    27  pnl -284
+  15:40:00 15:50:45  7645  wings 20  sto 9.05  em   10.1  em%  29.2  pnl -299
+  15:45:11 15:51:17  7650  wings 20  sto 8.40  em    9.6  em%  27.7  pnl -359
+  15:46:54 15:50:14  7640  wings 20  sto 8.30  em   9.35  em%    27  pnl -339
   15:50:18 16:00:00  7655  wings 20  sto 7.20  em   7.98  em%  23.1  pnl -123
   15:50:45 16:00:00  7660  wings 20  sto 7.30  em      8  em%  23.1  pnl +387
   15:51:18 16:00:00  7665  wings 20  sto 8.45  em   9.45  em%  27.3  pnl +688
-P&L +43
+P&L -45
 
 Events
 ----------
@@ -13,16 +13,15 @@ Events
   15:40:01 Regime Cookies ±2.5 / 5
   15:45:11 Opened fly 7650 (7630/7650/7670) at 8.40
   15:46:54 Opened fly 7640 (7620/7640/7660) at 8.30
-  15:50:13 Closed straddle 7640
-  15:50:13 Closed long call 7660 at 1.05
-  15:50:13 Parked longs 7620
+  15:50:14 Closed straddle 7640
+  15:50:14 Closed long call 7660 at 1.25
+  15:50:14 Parked longs 7620
   15:50:18 Opened fly 7655 (7635/7655/7675) at 7.20
-  15:50:44 Closed straddle 7645
-  15:50:44 Closed long call 7665 at 1.20
-  15:50:44 Parked longs 7625
+  15:50:45 Closed straddle 7645
+  15:50:45 Closed long call 7665 at 1.20
+  15:50:45 Parked longs 7625
   15:50:45 Opened fly 7660 (7640/7660/7680) at 7.30
-  15:51:16 Closed straddle 7650
-  15:51:16 Closed long call 7670 at 1.75
-  15:51:16 Parked longs 7630
+  15:51:17 Closed straddle 7650
+  15:51:17 Closed long call 7670 at 1.75
+  15:51:17 Parked longs 7630
   15:51:18 Opened fly 7665 (7645/7665/7685) at 8.45
-  16:15:59 Regime ±2.5 / 5

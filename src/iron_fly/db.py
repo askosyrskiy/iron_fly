@@ -202,6 +202,19 @@ def migrate(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS replay_pending_close (
+            player_id TEXT NOT NULL,
+            strike REAL NOT NULL,
+            opened_at TEXT NOT NULL,
+            due_at TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            wings INTEGER NOT NULL,
+            PRIMARY KEY (player_id, strike, opened_at)
+        )
+        """
+    )
 
 
 _PLAYER_STATE = """
