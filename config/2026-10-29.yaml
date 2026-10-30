@@ -1,0 +1,27 @@
+# 2026-10-29, driven by EM. A step stays on after the reading bounces.
+f1_at: "10:35"              # first fly once the clock arrives
+wings: 50                   # hold 50 until EM trades under 7.20
+regime: "±20/25"            # while EM holds 26.50 or higher
+stop: 0
+em_regime: false            # the bands below are this day's steps, not the credit table
+em_latch: true              # tighter regime, stop, and wings stay after a bounce
+credit_regime: false
+cookies_below: 50           # cookies once EM% is under 50, then stay there
+cookies_min_flies: 1
+follow_wings: false         # width comes from the 7.20 step, not the 0.40 put
+wing_steps: [50, 20]
+add_until: "16:00"
+leftover_until: "15:25"
+fill_mode_open: bid
+fill_mode_close: ask
+fee_per_contract: 1.22
+picks:
+  - at_em: 26.5             # ±15/20 once EM trades under 26.50
+    regime: "±15/20"
+  - at_em: 22               # ±10/15 once EM trades under 22
+    regime: "±10/15"
+  - at_em: 9.5              # stop +1 once EM trades under 9.50
+    stop: 1
+  - at_em: 7.2              # stop +2 and wings 20 once EM trades under 7.20
+    stop: 2
+    wings: 20
