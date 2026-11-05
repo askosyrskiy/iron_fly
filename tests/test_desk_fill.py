@@ -287,6 +287,26 @@ def test_widen_steps_the_put_and_leaves_a_short_overlap_blocked():
     assert widen_blocked_open(body.book.active(), 7660, 20) is None
 
 
+def test_widen_steps_call_twice_when_two_shorts_block():
+    from iron_fly.orders import widen_blocked_open
+
+    when = datetime(2026, 11, 4, 15, 54, tzinfo=ET)
+    book = DaleOg()
+    book.book.open_fly(7705, 24.0, 50, when)
+    book.book.open_fly(7710, 20.0, 50, when)
+    assert widen_blocked_open(book.book.active(), 7685, 20) == (20, 30)
+
+
+def test_widen_stops_at_fifty():
+    from iron_fly.orders import WIDEN_MAX_WING, WIDEN_STEP, widen_blocked_open
+
+    when = datetime(2026, 11, 4, 15, 54, tzinfo=ET)
+    book = DaleOg()
+    for center in range(7620, 7620 + WIDEN_MAX_WING, WIDEN_STEP):
+        book.book.open_fly(float(center), 20.0, 50, when)
+    assert widen_blocked_open(book.book.active(), 7600, 20) is None
+
+
 def test_open_blocked_suggests_wider_wings_when_that_clears_the_book(tmp_path):
     from iron_fly.orders import load_open_conflict, open_book_hold, record_open_blocked
 

@@ -392,27 +392,46 @@ def open_book_hold(active, strike: float, wings: int, call_wings: int | None = N
 
 
 WIDEN_STEP = 5
+WIDEN_MAX_WING = 50
+
+
+def _bump_wing(current: int) -> int | None:
+    """Step width out by 5, capped at 50. None when already at the max."""
+    if current >= WIDEN_MAX_WING:
+        return None
+    return min(current + WIDEN_STEP, WIDEN_MAX_WING)
 
 
 def widen_blocked_open(active, strike: float, wings: int) -> tuple[int, int] | None:
     """Put and call widths for this open.
 
-    A long wing that lands on an open short steps out by 5. None when that
-    step still overlaps the book, or when the new short is the overlap.
+    A long wing that lands on an open short steps out by 5, repeatedly until
+    the book accepts the fly or a non-wing overlap remains. Each side caps at
+    50 (20, 25, 30, …). None when no step helps, at the cap, or when the new
+    short body still fights the book.
     """
     width = int(wings)
     if open_book_hold(active, strike, width) is None:
         return width, width
     put_w, call_w = width, width
-    if _long_hits_short(active, strike - width):
-        put_w += WIDEN_STEP
-    if _long_hits_short(active, strike + width):
-        call_w += WIDEN_STEP
-    if put_w == width and call_w == width:
-        return None
-    if open_book_hold(active, strike, put_w, call_w) is not None:
-        return None
-    return put_w, call_w
+    while True:
+        if open_book_hold(active, strike, put_w, call_w) is None:
+            return put_w, call_w
+        moved = False
+        if _long_hits_short(active, strike - put_w):
+            next_put = _bump_wing(put_w)
+            if next_put is None:
+                return None
+            put_w = next_put
+            moved = True
+        if _long_hits_short(active, strike + call_w):
+            next_call = _bump_wing(call_w)
+            if next_call is None:
+                return None
+            call_w = next_call
+            moved = True
+        if not moved:
+            return None
 
 
 def _long_hits_short(active, wing: float) -> bool:

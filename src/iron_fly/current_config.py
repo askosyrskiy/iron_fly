@@ -20,7 +20,9 @@ from iron_fly.desk import (
     _clock,
     _ensure_state,
     _pid,
+    _pick_fired,
     _regime_latch,
+    _save_pick_fired,
     _save_regime_latch,
     _saved_spec,
     bind_player,
@@ -276,8 +278,10 @@ def _desk(
         em_pct_low=em_pct_low,
         em_low=em_low,
         regime_latch=_regime_latch(conn),
+        pick_fired=_pick_fired(conn),
     )
     _save_regime_latch(conn, state.regime_latch)
+    _save_pick_fired(conn, state.pick_fired)
     regime, wings, stop = _clean(state.regime, state.wings, state.stop)
     _note_policy(conn, clock, regime, stop, wings)
     return regime, wings, stop, True, True

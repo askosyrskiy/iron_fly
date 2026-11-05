@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -21,6 +21,35 @@ def _load_bake():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def test_session_bounds_follow_eastern_time():
+    bake = _load_bake()
+    summer_start, summer_end = bake.session_bounds(date(2026, 10, 13))
+    assert summer_start == datetime(2026, 10, 13, 9, 30, tzinfo=ET)
+    assert summer_end == datetime(2026, 10, 13, 16, 16, tzinfo=ET)
+    assert summer_end.utcoffset() == timedelta(hours=-4)
+
+    winter_start, winter_end = bake.session_bounds(date(2026, 11, 2))
+    assert winter_start == datetime(2026, 11, 2, 9, 30, tzinfo=ET)
+    assert winter_end == datetime(2026, 11, 2, 16, 16, tzinfo=ET)
+    assert winter_end.utcoffset() == timedelta(hours=-5)
+
+
+def test_truncated_chain_is_not_a_finished_day():
+    bake = _load_bake()
+    # One chain print a second from 09:30, but the book stops at 15:16 while SPX runs to 16:00.
+    start = int(datetime(2026, 11, 2, 9, 30, tzinfo=ET).timestamp())
+    chain_end = int(datetime(2026, 11, 2, 15, 16, tzinfo=ET).timestamp())
+    tape_end = int(datetime(2026, 11, 2, 16, 0, tzinfo=ET).timestamp())
+    chains = {str(stamp): [[7540, 1, 2, 3, 4]] for stamp in range(start, chain_end + 1, 2)}
+    tape = [{"time": stamp, "value": 7540.0} for stamp in range(start, tape_end + 1)]
+    assert bake.day_is_complete({"version": 4, "chains": chains, "tape": tape}) is False
+
+    full_end = int(datetime(2026, 11, 2, 16, 15, tzinfo=ET).timestamp())
+    chains[str(full_end)] = [[7540, 6, 7, 3, 4]]
+    tape.append({"time": full_end, "value": 7541.0})
+    assert bake.day_is_complete({"version": 4, "chains": chains, "tape": tape}) is True
 
 
 def test_remote_run_cmd_uses_network_not_exec_copy(monkeypatch):

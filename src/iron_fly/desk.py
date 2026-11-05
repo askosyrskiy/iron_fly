@@ -466,8 +466,10 @@ def sheet(
             em_pct_low=pct_low,
             em_low=em_low,
             regime_latch=_regime_latch(conn),
+            pick_fired=_pick_fired(conn),
         )
         _save_regime_latch(conn, state.regime_latch)
+        _save_pick_fired(conn, state.pick_fired)
         _adopt_state(conn, engine, state, book_clock(clock))
     note_policy(conn, clock, str(engine["regime"]), int(engine["stop"]), str(engine["wings"]))
     if spot is None:
@@ -930,7 +932,7 @@ def apply_spec(conn: sqlite3.Connection, spec: DeskSpec) -> None:
     conn.execute(
         """
         UPDATE desk_state
-        SET spec_yaml = ?, applied_at = NULL, regime_latch = NULL,
+        SET spec_yaml = ?, applied_at = NULL, regime_latch = NULL, pick_fired = NULL,
             eff_wings = NULL, eff_regime = NULL, eff_stop = NULL, eff_f1 = NULL, eff_clock = NULL
         WHERE player_id = ?
         """,
@@ -1124,7 +1126,7 @@ def clear_flies(conn: sqlite3.Connection) -> None:
     forget_policy(_pid())
     conn.execute("DELETE FROM replay_pending_close WHERE player_id = ?", (_pid(),))
     conn.execute(
-        "UPDATE desk_state SET applied_at = NULL, regime_latch = NULL, open_conflict = NULL WHERE player_id = ?",
+        "UPDATE desk_state SET applied_at = NULL, regime_latch = NULL, pick_fired = NULL, open_conflict = NULL WHERE player_id = ?",
         (_pid(),),
     )
 
@@ -1239,7 +1241,7 @@ def _clear_day_state(conn: sqlite3.Connection, today: str) -> None:
         SET book_day = ?, applied_at = NULL,
             em_open = NULL, em_open_day = NULL, em_open_samples = '[]',
             em_now = NULL, em_pct = NULL, put40_wings = NULL,
-            em_low = NULL, em_pct_low = NULL, em_low_day = NULL, regime_latch = NULL,
+            em_low = NULL, em_pct_low = NULL, em_low_day = NULL, regime_latch = NULL, pick_fired = NULL,
             cash_close = NULL, cash_close_day = NULL,
             eff_wings = NULL, eff_regime = NULL, eff_stop = NULL, eff_f1 = NULL, eff_clock = NULL,
             ladder_json = '[]', step_json = '', open_paused = 0
@@ -1276,7 +1278,7 @@ def bind_book_day(conn: sqlite3.Connection, day: str) -> None:
     if current:
         conn.execute("DELETE FROM fly WHERE player_id = ?", (_pid(),))
     conn.execute(
-        "UPDATE desk_state SET book_day = ?, applied_at = NULL, regime_latch = NULL WHERE player_id = ?",
+        "UPDATE desk_state SET book_day = ?, applied_at = NULL, regime_latch = NULL, pick_fired = NULL WHERE player_id = ?",
         (day, _pid()),
     )
 
@@ -1473,6 +1475,18 @@ def _save_regime_latch(conn: sqlite3.Connection, name: str | None) -> None:
     conn.execute("UPDATE desk_state SET regime_latch = ? WHERE player_id = ?", (name or None, _pid()))
 
 
+def _pick_fired(conn: sqlite3.Connection) -> frozenset[int]:
+    row = conn.execute("SELECT pick_fired FROM desk_state WHERE player_id = ?", (_pid(),)).fetchone()
+    if row is None or not row["pick_fired"]:
+        return frozenset()
+    return frozenset(int(part) for part in str(row["pick_fired"]).split(",") if part.strip())
+
+
+def _save_pick_fired(conn: sqlite3.Connection, fired: frozenset[int]) -> None:
+    text = ",".join(str(index) for index in sorted(fired)) if fired else None
+    conn.execute("UPDATE desk_state SET pick_fired = ? WHERE player_id = ?", (text, _pid()))
+
+
 def _eff_wings(conn: sqlite3.Connection) -> str:
     row = conn.execute("SELECT eff_wings FROM desk_state WHERE player_id = ?", (_pid(),)).fetchone()
     if row is None or not row["eff_wings"]:
@@ -1565,8 +1579,12 @@ def replay_until(conn: sqlite3.Connection, settings: Settings, day: date, until:
     if spec is not None and not rebuild and spec.desk == "auto":
         width_choice = _starting_wings(prior_wings, width_choice)
     regime_latch = None if rebuild else _regime_latch(conn)
+    pick_fired: frozenset[int] = frozenset() if rebuild else _pick_fired(conn)
     if rebuild:
-        conn.execute("UPDATE desk_state SET regime_latch = NULL WHERE player_id = ?", (_pid(),))
+        conn.execute(
+            "UPDATE desk_state SET regime_latch = NULL, pick_fired = NULL WHERE player_id = ?",
+            (_pid(),),
+        )
         forget_policy(_pid())
     walked = 0
     logged = None
@@ -1607,8 +1625,10 @@ def replay_until(conn: sqlite3.Connection, settings: Settings, day: date, until:
                 em_pct_low=pct_low,
                 em_low=em_low,
                 regime_latch=regime_latch,
+                pick_fired=pick_fired,
             )
             regime_latch = state.regime_latch or None
+            pick_fired = state.pick_fired
             width_choice = state.latest_wings or state.wings
             shown = state.wings if state.wings != "auto" else str(wings_for_clock(wall))
             note_policy(conn, ts, state.regime, int(state.stop), shown)
@@ -1665,6 +1685,7 @@ def replay_until(conn: sqlite3.Connection, settings: Settings, day: date, until:
     log.info("step %s walked %s prints", _clock_text(until), walked)
     save_book(conn, book)
     _save_regime_latch(conn, regime_latch)
+    _save_pick_fired(conn, pick_fired)
     if engine["use_config"]:
         conn.execute(
             "UPDATE desk_state SET regime = ?, stop_pad = ? WHERE player_id = ?",
@@ -1885,8 +1906,10 @@ def session_step(conn: sqlite3.Connection, settings: Settings, marks: DeskMarks)
                 em_pct_low=pct_low,
                 em_low=em_low,
                 regime_latch=_regime_latch(conn),
+                pick_fired=_pick_fired(conn),
             )
             _save_regime_latch(conn, state.regime_latch)
+            _save_pick_fired(conn, state.pick_fired)
             width_choice = state.latest_wings or state.wings
             if engine["auto_open"]:
                 strategy.f1_at = state.f1_at

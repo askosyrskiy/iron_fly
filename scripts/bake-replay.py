@@ -21,7 +21,7 @@ import os
 import subprocess
 import sys
 import time
-from datetime import date, datetime
+from datetime import date, datetime, time as time_of_day
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -32,6 +32,12 @@ _DOCKER_CONTEXT = os.environ.get("BAKE_DOCKER_CONTEXT", "mac-mini")
 _DOCKER_NETWORK = os.environ.get("BAKE_DOCKER_NETWORK", "data")
 _BAKE_IMAGE = os.environ.get("BAKE_IMAGE", "iron-fly-bake:local")
 _WORKER_STREAMER = os.environ.get("BAKE_WORKER_STREAMER_URL", "http://collector:8080")
+# Cash session in Eastern time. 16:16 is the exclusive end, matching the collector.
+_RTH_OPEN = time_of_day(9, 30)
+_RTH_END = time_of_day(16, 16)
+# A quiet close can stop changing quotes before the last SPX print. An hour-early
+# chain (the old fixed -04 cutoff on an EST day) is not a finished file.
+_CHAIN_LAG_SECONDS = 15 * 60
 _CHAIN_SQL = (
     "SELECT EXTRACT(EPOCH FROM ts)::bigint, strike, call_bid, call_ask, put_bid, put_ask "
     "FROM option_chain_samples "
@@ -76,12 +82,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _host_main(day_texts: list[str] | None = None) -> int:
     from iron_fly.quotes.collector import CollectorClient
-    from iron_fly.quotes.replay import (
-        _CACHE_VERSION,
-        _read_payload,
-        chains_keep_each_print,
-        tape_keeps_each_second,
-    )
+    from iron_fly.quotes.replay import _read_payload
 
     # Host only needs BAKE_DATABASE_URL (passed into the worker). SPX tape is fetched
     # inside the container via collector on network "data". MARKET_STREAMER_URL on the
@@ -124,15 +125,7 @@ def _host_main(day_texts: list[str] | None = None) -> int:
         path = dest / f"{item}.json"
         payload = _read_payload(path)
         chains = payload.get("chains") if isinstance(payload, dict) else None
-        tape = payload.get("tape") if isinstance(payload, dict) else None
-        dense = tape_keeps_each_second(tape) and chains_keep_each_print(chains)
-        if (
-            isinstance(payload, dict)
-            and payload.get("version") == _CACHE_VERSION
-            and isinstance(chains, dict)
-            and chains
-            and dense
-        ):
+        if day_is_complete(payload):
             print(f"skip {item} tape={len(payload.get('tape') or [])} chains={len(chains)}")
             continue
         print(f"bake {item}", flush=True)
@@ -208,12 +201,54 @@ def opening_em_db(day: date, dsn: str) -> float | None:
     return float(row[0])
 
 
+def session_bounds(day: date) -> tuple[datetime, datetime]:
+    """09:30 through 16:16 America/New_York. EST and EDT both reach the cash close."""
+    return (
+        datetime.combine(day, _RTH_OPEN, tzinfo=_ET),
+        datetime.combine(day, _RTH_END, tzinfo=_ET),
+    )
+
+
+def chain_covers_tape(tape: object, chains: object) -> bool:
+    """False when the stored chain ends well before the SPX tape."""
+    if not isinstance(tape, list) or not tape or not isinstance(chains, dict) or not chains:
+        return False
+    last_tape = tape[-1].get("time") if isinstance(tape[-1], dict) else None
+    if not isinstance(last_tape, (int, float)):
+        return False
+    try:
+        last_chain = max(int(key) for key in chains)
+    except (TypeError, ValueError):
+        return False
+    return int(last_tape) - last_chain <= _CHAIN_LAG_SECONDS
+
+
+def day_is_complete(payload: object) -> bool:
+    """A version-4 file whose chain reaches the end of its tape."""
+    from iron_fly.quotes.replay import (
+        _CACHE_VERSION,
+        chains_keep_each_print,
+        tape_keeps_each_second,
+    )
+
+    if not isinstance(payload, dict) or payload.get("version") != _CACHE_VERSION:
+        return False
+    chains = payload.get("chains")
+    tape = payload.get("tape")
+    if not isinstance(chains, dict) or not chains:
+        return False
+    return (
+        tape_keeps_each_second(tape)
+        and chains_keep_each_print(chains)
+        and chain_covers_tape(tape, chains)
+    )
+
+
 def chain_records_db(day: date, dsn: str):
     """Yield (stamp, strike, call_bid, call_ask, put_bid, put_ask) from Postgres on the data network."""
     import psycopg
 
-    start = f"{day.isoformat()} 09:30:00-04"
-    end = f"{day.isoformat()} 16:16:00-04"
+    start, end = session_bounds(day)
     with psycopg.connect(dsn) as conn:
         with conn.cursor(name=f"bake_chains_{day.isoformat().replace('-', '')}") as cur:
             cur.itersize = 20_000
@@ -230,13 +265,52 @@ def chain_records_db(day: date, dsn: str):
                 )
 
 
-def _ensure_bake_image() -> str | None:
+def _image_created() -> datetime | None:
     inspect = subprocess.run(
-        ["docker", "--context", _DOCKER_CONTEXT, "image", "inspect", _BAKE_IMAGE],
+        [
+            "docker",
+            "--context",
+            _DOCKER_CONTEXT,
+            "image",
+            "inspect",
+            "--format",
+            "{{.Created}}",
+            _BAKE_IMAGE,
+        ],
         capture_output=True,
         text=True,
     )
-    if inspect.returncode == 0 and os.environ.get("BAKE_REBUILD", "").strip() not in {"1", "true", "yes"}:
+    if inspect.returncode != 0:
+        return None
+    text = inspect.stdout.strip().replace("Z", "+00:00")
+    if "." in text:
+        left, right = text.split(".", 1)
+        offset = ""
+        for mark in ("+", "-"):
+            if mark in right:
+                frac, rest = right.split(mark, 1)
+                offset = mark + rest
+                right = frac
+                break
+        text = f"{left}.{right[:6]}{offset}"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _bake_image_stale() -> bool:
+    """Rebuild when the worker script or image recipe is newer than the image."""
+    created = _image_created()
+    if created is None:
+        return True
+    sources = (ROOT / "scripts" / "bake-replay.py", ROOT / "Dockerfile.bake")
+    return any(path.stat().st_mtime > created.timestamp() for path in sources if path.is_file())
+
+
+def _ensure_bake_image() -> str | None:
+    forced = os.environ.get("BAKE_REBUILD", "").strip().lower() in {"1", "true", "yes"}
+    if not forced and not _bake_image_stale():
         return None
     print(f"build {_BAKE_IMAGE} on {_DOCKER_CONTEXT}", flush=True)
     built = subprocess.run(

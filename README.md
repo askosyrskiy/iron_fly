@@ -4,7 +4,7 @@ Docker-first **Dale's** SPX 0DTE iron-fly **backtest** desk and CLI.
 Inspired by [Dale's iron fly on YouTube](https://www.youtube.com/watch?v=kNR2r8Nj3qI).
 
 Strategy rules come from
-[`iron_fly_strategy@v0.1.11`](https://github.com/askosyrskiy/iron_fly_strategy).
+[`iron_fly_strategy@v0.1.13`](https://github.com/askosyrskiy/iron_fly_strategy).
 Session tapes are gzipped on Cloudflare R2 (~1.5 MB/day). Each day file stores
 **SPX prints every 1 second** and the **option chain every 2 seconds**.
 
@@ -26,7 +26,7 @@ Default configuration is `config/default.yaml` (paste/Apply in **Configuration**
 ```bash
 cp .env.example .env
 python3.12 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"   # pulls iron-fly-strategy@v0.1.11 from GitHub
+pip install -e ".[dev]"   # pulls iron-fly-strategy@v0.1.13 from GitHub
 
 make run-local            # hydrate last 10 days from R2, then serve
 # open http://localhost:8000
@@ -279,7 +279,7 @@ These may sit at the top level (preferred) or under a legacy nested `auto:` bloc
 
 ### Picks
 
-Each pick needs **exactly one** trigger, plus any of `regime`, `stop`, `wings` to apply when it fires:
+Each pick needs **exactly one** trigger, plus any of `regime`, `regime_down`, `stop`, `wings`, or `slippage` to apply when it fires:
 
 | Trigger | Meaning |
 |---|---|
@@ -287,10 +287,17 @@ Each pick needs **exactly one** trigger, plus any of `regime`, `stop`, `wings` t
 | `at_em_pct` | Fires while EM% is **below** this number. |
 | `at_em` | Fires while absolute EM is **below** this number. |
 
+| Pick field | Meaning |
+|---|---|
+| `regime` | Set the grid to this label (cannot widen vs current). |
+| `regime_down` | **`1` only** — on the **first** EM/EM% trigger of the session, tighten one band from the fill-credit row (or desk cap): s4→s3→s2→s1; s1 unchanged. Does not fire again if EM% recovers and dips. Mutually exclusive with `regime`. |
+
 Example:
 
 ```yaml
 picks:
+  - at_em_pct: 70
+    regime_down: 1
   - at_em_pct: 65
     regime: "±7.5/10"
   - at_time: "15:00"

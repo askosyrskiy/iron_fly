@@ -125,6 +125,8 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE desk_state ADD COLUMN regime_latch TEXT")
     if "open_conflict" not in columns:
         conn.execute("ALTER TABLE desk_state ADD COLUMN open_conflict TEXT")
+    if "pick_fired" not in columns:
+        conn.execute("ALTER TABLE desk_state ADD COLUMN pick_fired TEXT")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS leftover_long (
@@ -246,7 +248,8 @@ CREATE TABLE desk_state (
     em_low REAL,
     em_pct_low REAL,
     em_low_day TEXT,
-    regime_latch TEXT
+    regime_latch TEXT,
+    pick_fired TEXT
 )
 """
 
