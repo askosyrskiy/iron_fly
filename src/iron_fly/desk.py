@@ -45,6 +45,7 @@ from iron_fly.orders import (
     short_mark,
 )
 from iron_fly.quotes.replay import (
+    ChainCursor,
     baked_days,
     chain_memory,
     has_chain_memory,
@@ -1528,7 +1529,14 @@ def _adopt_state(conn: sqlite3.Connection, engine: dict, state: ConfigState, wal
     )
 
 
-def replay_until(conn: sqlite3.Connection, settings: Settings, day: date, until: datetime) -> datetime:
+def replay_until(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    day: date,
+    until: datetime,
+    *,
+    pnl_path: list | None = None,
+) -> datetime:
     """Advance the saved book from the last applied print to `until`.
 
     Auto Open / Auto Drop keep the flies already in the database and only
@@ -1597,6 +1605,11 @@ def replay_until(conn: sqlite3.Connection, settings: Settings, day: date, until:
     points = _spx_slice(day, after, until_s)
     if points is None:
         points = tape_seconds(marks.tape or [], after, until_s)
+    cursor = ChainCursor(day) if pnl_path is not None else None
+    held: list[dict] = []
+    cash_points = 0.0
+    inventory_known = False
+    settled_path = False
     for point in points:
         ts = datetime.fromtimestamp(int(point["time"]), tz=_ET)
         wall = book_clock(ts)
@@ -1635,6 +1648,7 @@ def replay_until(conn: sqlite3.Connection, settings: Settings, day: date, until:
             if engine["auto_open"]:
                 strategy.f1_at = state.f1_at
         clock = _clock_text(ts)
+        sold = 0
         if leftover_long_rows(conn) and leftovers_sell_allowed(book_clock(ts), leftover_rules):
             sold = sell_ready_leftovers(conn, settings, chain_asof(settings, day, ts), leftover_rules, ts)
             if sold:
@@ -1681,6 +1695,26 @@ def replay_until(conn: sqlite3.Connection, settings: Settings, day: date, until:
             )
             if getattr(strategy, "opens_paused", False):
                 engine["auto_open"] = False
+        if cursor is not None and pnl_path is not None:
+            changed = cursor.advance(int(point["time"]))
+            settling = book_clock(ts) >= _CASH_AT
+            dirty = bool(intents) or bool(sold) or (settling and not settled_path)
+            settled_path = settling
+            if dirty or not inventory_known:
+                held = leftover_long_rows(conn)
+                cash_points = parked_cash_points(conn, day.isoformat())
+                inventory_known = True
+            if (changed or dirty) and (book.flies or held or cash_points):
+                marked = _path_pnl(
+                    book,
+                    cursor,
+                    held,
+                    cash_points,
+                    ts,
+                    _tape_cash(marks, day) if settling else None,
+                )
+                if marked is not None:
+                    _append_path(pnl_path, ts, marked)
         walked += 1
     log.info("step %s walked %s prints", _clock_text(until), walked)
     save_book(conn, book)
@@ -2591,6 +2625,56 @@ def _save_open(conn: sqlite3.Connection, day: str, opening: float | None, sample
         "UPDATE desk_state SET em_open = ?, em_open_day = ?, em_open_samples = ? WHERE player_id = ?",
         (opening, day, payload, _pid()),
     )
+
+
+def _append_path(path: list, ts: datetime, pnl: float) -> None:
+    """Keep the first time a P&L prints. A repeated mark does not move that time."""
+    if path and path[-1][1] == pnl:
+        return
+    path.append((ts, pnl))
+
+
+def _path_pnl(
+    book: FlyBook,
+    cursor: ChainCursor,
+    held: list[dict],
+    cash_points: float,
+    ts: datetime,
+    cash_close: float | None,
+) -> float | None:
+    """Portfolio points at `ts`, using the same marks as the end-of-day sheet."""
+    settle = book_clock(ts) >= _CASH_AT and cash_close is not None
+    total = 0.0
+    seen = False
+    for fly in book.flies:
+        seen = True
+        if settle and _settle_fly(fly):
+            put_w, call_w = fly.spans()
+            total += fly_expiration_pnl(cash_close, fly.strike, fly.credit, put_w, call_w)
+            continue
+        if fly.status == "closed" and fly.net is not None:
+            total += fly.net
+            continue
+        put_w, call_w = fly.spans()
+        mark = cursor.combo(fly.strike, put_w, call_w)
+        if mark is None:
+            return None
+        total += round(fly.credit - mark, 2)
+    parked = 0.0
+    for lot in held:
+        seen = True
+        if settle:
+            intrinsic = cash_close - float(lot["strike"])
+            mark = max(0.0, intrinsic if lot["right"] == "call" else -intrinsic)
+        else:
+            mark = cursor.mid(float(lot["strike"]), str(lot["right"]))
+            if mark is None:
+                return None
+        parked += float(mark) * int(lot["quantity"])
+    parked = round(parked, 4)
+    if not seen and not cash_points and not parked:
+        return None
+    return round(total + cash_points + parked, 4)
 
 
 def _stamp_flies(data: dict, book: FlyBook, marks: DeskMarks, clock: datetime) -> None:

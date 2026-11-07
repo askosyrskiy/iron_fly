@@ -14,7 +14,7 @@ from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from iron_fly.domain.market import ChainSnapshot, DeskMarks, StrikeQuote, downsample, put40_width, straddle_mid
+from iron_fly.domain.market import ChainSnapshot, DeskMarks, StrikeQuote, downsample, mid, put40_width, straddle_mid
 
 log = logging.getLogger("iron_fly.quotes.replay")
 
@@ -167,6 +167,68 @@ def chain_memory(day: date, when: datetime) -> ChainSnapshot | None:
 
 def has_chain_memory(day: date) -> bool:
     return bool(_CHAIN_MEMORY.get(day.isoformat()))
+
+
+class ChainCursor:
+    """Forward scan of one session's chain. Advance with nondecreasing stamps."""
+
+    def __init__(self, day: date) -> None:
+        book = _CHAIN_MEMORY.get(day.isoformat())
+        self._series = book if isinstance(book, _ChainSeries) else None
+        self._minutes = book if isinstance(book, dict) else None
+        self._index = -1
+        self._quotes: dict[float, tuple] = {}
+        self._minute: int | None = None
+        self._by_strike: dict[float, StrikeQuote] = {}
+
+    def advance(self, stamp: int) -> bool:
+        """Apply every stored print at or before `stamp`. True when the book moved."""
+        if self._series is not None:
+            changed = False
+            stamps = self._series.stamps
+            while self._index + 1 < len(stamps) and stamps[self._index + 1] <= stamp:
+                self._index += 1
+                self._series._apply(self._quotes, self._index)
+                changed = True
+            return changed
+        if not self._minutes:
+            return False
+        minute = stamp // 60
+        if minute == self._minute:
+            return False
+        snap = self._minutes.get(minute)
+        if snap is None:
+            return False
+        self._minute = minute
+        self._by_strike = {row.strike: row for row in snap.strikes}
+        return True
+
+    def mid(self, strike: float, right: str) -> float | None:
+        if self._series is not None:
+            packed = self._quotes.get(float(strike))
+            if packed is None:
+                return None
+            if right == "call":
+                bid, ask = _unpack_float(packed[0]), _unpack_float(packed[1])
+            else:
+                bid, ask = _unpack_float(packed[2]), _unpack_float(packed[3])
+            return mid(bid, ask)
+        row = self._by_strike.get(float(strike))
+        if row is None:
+            return None
+        bid, ask = (row.call_bid, row.call_ask) if right == "call" else (row.put_bid, row.put_ask)
+        return mid(bid, ask)
+
+    def combo(self, strike: float, wings: int, call_wings: int | None = None) -> float | None:
+        """Same 4-leg mid as combo_mark: shorts minus wings."""
+        call = wings if call_wings is None else call_wings
+        short_call = self.mid(strike, "call")
+        short_put = self.mid(strike, "put")
+        long_call = self.mid(strike + call, "call")
+        long_put = self.mid(strike - wings, "put")
+        if None in (short_call, short_put, long_call, long_put):
+            return None
+        return round(float(short_call) + float(short_put) - float(long_call) - float(long_put), 2)
 
 
 def store_chain_rows(day: date, rows: object) -> int:

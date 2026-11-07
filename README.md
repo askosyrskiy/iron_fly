@@ -4,7 +4,7 @@ Docker-first **Dale's** SPX 0DTE iron-fly **backtest** desk and CLI.
 Inspired by [Dale's iron fly on YouTube](https://www.youtube.com/watch?v=kNR2r8Nj3qI).
 
 Strategy rules come from
-[`iron_fly_strategy@v0.1.13`](https://github.com/askosyrskiy/iron_fly_strategy).
+[`iron_fly_strategy@v0.1.14`](https://github.com/askosyrskiy/iron_fly_strategy).
 Session tapes are gzipped on Cloudflare R2 (~1.5 MB/day). Each day file stores
 **SPX prints every 1 second** and the **option chain every 2 seconds**.
 
@@ -26,7 +26,7 @@ Default configuration is `config/default.yaml` (paste/Apply in **Configuration**
 ```bash
 cp .env.example .env
 python3.12 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"   # pulls iron-fly-strategy@v0.1.13 from GitHub
+pip install -e ".[dev]"   # pulls iron-fly-strategy@v0.1.14 from GitHub
 
 make run-local            # hydrate last 10 days from R2, then serve
 # open http://localhost:8000
@@ -245,6 +245,7 @@ Written as labels or short codes (aliases accepted):
 | `±10/15` | `s2` | ±10 / ±15 |
 | `±15/20` | `s3` | ±15 / ±20 |
 | `±20/25` | `s4` | ±20 / ±25 |
+| `±25/30` | `s5` | ±25 / ±30 |
 | `±2.5/5` | `ladder` | Neighbor ladder (±2.5 / ±5) |
 | `cookies` | `cookies` | Tight cookies grid (±2.5 / ±5) |
 
@@ -256,8 +257,8 @@ These may sit at the top level (preferred) or under a legacy nested `auto:` bloc
 
 | Field | Values | Meaning |
 |---|---|---|
-| `credit_regime` | `true` / `false` | After a **50-wide** fill, snap the grid from that credit band (s1–s4). Cannot go wider than the desk `regime` / `regime_max`. Ignored on a print where `em_regime` has a current EM $. |
-| `em_regime` | `true` / `false` | Current EM $ picks the same rows as the credit table, and the next print may widen. Under $15 → ±7.5/10, $15–$19 → ±10/15, under $24.90 → ±15/20, $24.90 and above → ±20/25. The desk `regime` cap does not apply. Before the open EM is published, the desk `regime` stays. |
+| `credit_regime` | `true` / `false` | After a **50-wide** fill, snap the grid from that credit band (s1–s5). Cannot go wider than the desk `regime` / `regime_max`. Ignored on a print where `em_regime` has a current EM $. |
+| `em_regime` | `true` / `false` | Current EM $ picks the same rows as the credit table, and the next print may widen. Under $15 → ±7.5/10, $15–$19 → ±10/15, under $24.90 → ±15/20, $24.90–$29.99 → ±20/25, $30 and above → ±25/30. The desk `regime` cap does not apply. Before the open EM is published, the desk `regime` stays. |
 | `regime_max` | regime label/code | Cap how wide credit-regime may go. |
 | `cookies_below` | number (EM%) | Switch to cookies while EM% is under this. |
 | `cookies_min_flies` | whole number ≥ 0 | Cookies only if at least this many flies are open. |
@@ -290,7 +291,7 @@ Each pick needs **exactly one** trigger, plus any of `regime`, `regime_down`, `s
 | Pick field | Meaning |
 |---|---|
 | `regime` | Set the grid to this label (cannot widen vs current). |
-| `regime_down` | **`1` only** — on the **first** EM/EM% trigger of the session, tighten one band from the fill-credit row (or desk cap): s4→s3→s2→s1; s1 unchanged. Does not fire again if EM% recovers and dips. Mutually exclusive with `regime`. |
+| `regime_down` | **`1` only** — on the **first** EM/EM% trigger of the session, tighten one band from the fill-credit row (or desk cap): s5→s4→s3→s2→s1; s1 unchanged. Does not fire again if EM% recovers and dips. Mutually exclusive with `regime`. |
 
 Example:
 

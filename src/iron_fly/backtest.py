@@ -45,6 +45,7 @@ class DayResult:
     em_open: float | None = None
     em_at_open: float | None = None
     em_pct: float | None = None
+    pnl_span: str = ""
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -106,7 +107,8 @@ def _walk(text: str, days: list[date], *, replay: Path | None = None):
                 apply_spec(conn, spec)
                 conn.commit()
                 end = datetime.combine(day, time(23, 59), tzinfo=_ET)
-                replay_until(conn, settings, day, end)
+                path: list[tuple[datetime, float]] = []
+                replay_until(conn, settings, day, end, pnl_path=path)
                 conn.commit()
                 marks = load_day_tape(settings, day)
                 if marks.error or not marks.tape:
@@ -134,6 +136,8 @@ def _walk(text: str, days: list[date], *, replay: Path | None = None):
         pnl = frame.get("pnl")
         em_open = _num(frame.get("em_open"))
         first_em, first_pct = _reading_at(marks.tape, opened[0]) if opened else (None, None)
+        _include_official(path, marks.ts, pnl)
+        span = _range_text(*_pnl_extremes(path))
         yield DayResult(
             day,
             _report(
@@ -144,11 +148,13 @@ def _walk(text: str, days: list[date], *, replay: Path | None = None):
                 tape=marks.tape or [],
                 opened=opened,
                 events=events,
+                pnl_span=span,
             ),
             float(pnl) if isinstance(pnl, (int, float)) else None,
             em_open,
             first_em,
             first_pct,
+            span,
         )
 
 
@@ -157,8 +163,9 @@ def _print_pnl(text: str, days: list[date], *, replay: Path | None) -> None:
     total = 0
     counted = False
     for item in _walk(text, days, replay=replay):
+        gap = f"  {item.pnl_span}  " if item.pnl_span else "  "
         print(
-            f"{item.day.isoformat():<12}{_money(item.pnl)}  "
+            f"{item.day.isoformat():<12}{_money(item.pnl)}{gap}"
             f"open EM {_quote(item.em_open):>6}  em {_quote(item.em_at_open):>6}  em% {_quote(item.em_pct):>5}",
             flush=True,
         )
@@ -269,6 +276,7 @@ def _report(
     tape: list | None = None,
     opened: list[datetime] | None = None,
     events: list | None = None,
+    pnl_span: str = "",
 ) -> str:
     lines = [f"{day.isoformat()}  {summary} · open EM {_quote(frame.get('em_open'))}"]
     flies = frame.get("flies") or []
@@ -291,7 +299,10 @@ def _report(
             f"Parked wings cash {_dollars(frame.get('parked_cash_points'))} "
             f"value {_dollars(frame.get('parked_value_points'))}"
         )
-    lines.append(f"P&L {_dollars(frame.get('pnl'))}")
+    pnl_line = f"P&L {_dollars(frame.get('pnl'))}"
+    if pnl_span:
+        pnl_line += f"  {pnl_span}"
+    lines.append(pnl_line)
     lines.append("")
     lines.append("Events")
     lines.append("----------")
@@ -317,6 +328,48 @@ def _reading_at(
         return None, None
     point = tape[index]
     return _num(point.get("em")), _num(point.get("pct"))
+
+
+def _include_official(path: list[tuple[datetime, float]], when: datetime | None, pnl: object) -> None:
+    """Keep the printed close inside the session range when the last mark differs."""
+    if when is None or not isinstance(pnl, (int, float)) or isinstance(pnl, bool):
+        return
+    value = float(pnl)
+    if path and abs(path[-1][1] - value) < 5e-4:
+        return
+    path.append((when, value))
+
+
+def _pnl_extremes(
+    path: list[tuple[datetime, float]],
+) -> tuple[float | None, datetime | None, float | None, datetime | None]:
+    """First time the session P&L printed its low, and the first time it printed its high."""
+    if not path:
+        return None, None, None, None
+    lo = hi = path[0]
+    for item in path[1:]:
+        if item[1] < lo[1]:
+            lo = item
+        if item[1] > hi[1]:
+            hi = item
+    return lo[1], lo[0], hi[1], hi[0]
+
+
+def _range_text(
+    lo: float | None,
+    lo_at: datetime | None,
+    hi: float | None,
+    hi_at: datetime | None,
+) -> str:
+    if lo is None or hi is None or lo_at is None or hi_at is None:
+        return ""
+    return f"min {_dollars(lo)} at {_clock(lo_at)}  max {_dollars(hi)} at {_clock(hi_at)}"
+
+
+def _clock(when: datetime) -> str:
+    if when.tzinfo is not None:
+        when = when.astimezone(_ET)
+    return when.strftime("%H:%M:%S")
 
 
 def _event_clock(raw: object) -> str:

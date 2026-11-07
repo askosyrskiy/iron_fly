@@ -1,7 +1,7 @@
-f1_at: "10:35"              # open the first fly at this clock
+f1_at: "10:39"              # open the first fly at this clock
 f1_below: 83                # AND below this EM%, open the first fly
 wings: 50                   # starting width; later steps can only narrow it
-regime: "±20/25"            # grid until EM is published
+regime: "±25/30"            # grid until EM is published
 stop: 0                     # drop at the credit breakeven (K ± credit)
 em_regime: false            # current EM $ picks the row, and can widen again
 credit_regime: true         # the fill credit no longer sets the grid

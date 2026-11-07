@@ -1,4 +1,4 @@
-f1_at: "15:40"              # open the first fly at this clock
+f1_at: "15:51"              # open the first fly at this clock
 #f1_below: 80                # AND below this EM%, open the first fly
 wings: 20                   # starting width; later steps can only narrow it
 regime: "±2.5/5"            # watch ±15, add at 20; credit regime cannot go wider
