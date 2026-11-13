@@ -222,28 +222,93 @@ def leftovers_sell_allowed(wall: time, auto: dict[str, object] | None = None) ->
     return wall < leftover_until_clock(auto)
 
 
+# Parked wing may sit this many points off the intended put/call strike.
+POOL_REUSE_MATCH = 10
+
+
 def reusable_wing_lots(
     conn: sqlite3.Connection,
     chain: ChainSnapshot | None,
     strike: float,
     wings: int,
     call_wings: int | None = None,
+    *,
+    active=None,
+    auto: dict[str, object] | None = None,
 ) -> list[dict] | None:
-    """Both parked wing longs for this fly, or None if either is missing."""
+    """Parked put+call within ±POOL_REUSE_MATCH of the wing targets, or None."""
+    _ = (chain, auto)  # signature kept for callers; match is strike±wings ±10
+    return _reusable_near(conn, strike, wings, call_wings, active)
+
+
+def wing_spans_from_lots(strike: float, lots: list[dict]) -> tuple[int, int]:
+    """Put and call widths from reused leftover rows (put lot first)."""
+    put_k = call_k = None
+    for lot in lots:
+        if str(lot["right"]) == "put":
+            put_k = float(lot["strike"])
+        elif str(lot["right"]) == "call":
+            call_k = float(lot["strike"])
+    if put_k is None or call_k is None:
+        raise ValueError("reused lots need one put and one call")
+    return int(round(strike - put_k)), int(round(call_k - strike))
+
+
+def _reusable_near(
+    conn: sqlite3.Connection,
+    strike: float,
+    wings: int,
+    call_wings: int | None,
+    active,
+) -> list[dict] | None:
+    """Pick a put and call in the pool within ±POOL_REUSE_MATCH of wing targets."""
+    put_w = int(wings)
+    call_w = int(wings if call_wings is None else call_wings)
+    target_put = float(strike - put_w)
+    target_call = float(strike + call_w)
     parked = leftover_long_rows(conn)
-    if not parked:
+    puts = [
+        lot
+        for lot in parked
+        if str(lot["right"]) == "put"
+        and float(lot["strike"]) < strike
+        and int(lot["quantity"]) >= 1
+        and abs(float(lot["strike"]) - target_put) <= POOL_REUSE_MATCH
+    ]
+    calls = [
+        lot
+        for lot in parked
+        if str(lot["right"]) == "call"
+        and float(lot["strike"]) > strike
+        and int(lot["quantity"]) >= 1
+        and abs(float(lot["strike"]) - target_call) <= POOL_REUSE_MATCH
+    ]
+    if not puts or not calls:
         return None
-    by_key = {(str(lot["right"]), int(lot["strike"])): lot for lot in parked}
-    by_occ = {str(lot["occ"]): lot for lot in parked}
-    matched: list[dict] = []
-    for need in wing_lots(chain, strike, wings, call_wings):
-        lot = by_key.get((str(need["right"]), int(need["strike"])))
-        if lot is None:
-            lot = by_occ.get(str(need["occ"]))
-        if lot is None or int(lot["quantity"]) < 1:
-            return None
-        matched.append(lot)
-    return matched if len(matched) == 2 else None
+    best: list[dict] | None = None
+    best_score: float | None = None
+    best_balance: int | None = None
+    for put_lot in puts:
+        for call_lot in calls:
+            put_k = int(round(float(put_lot["strike"])))
+            call_k = int(round(float(call_lot["strike"])))
+            put_span = int(round(strike - put_k))
+            call_span = int(round(call_k - strike))
+            if active is not None and open_book_hold(active, strike, put_span, call_span) is not None:
+                continue
+            score = abs(put_k - target_put) + abs(call_k - target_call)
+            balance = abs(put_span - call_span)
+            if (
+                best_score is None
+                or score < best_score
+                or (score == best_score and best_balance is not None and balance < best_balance)
+            ):
+                best_score = score
+                best_balance = balance
+                best = [put_lot, call_lot]
+    if best is None:
+        return None
+    return best
 
 
 def consume_wing_lots(conn: sqlite3.Connection, lots: list[dict]) -> None:
@@ -552,11 +617,15 @@ def sell_ready_leftovers(
         anchor = _forty_strike(chain, right, target=target_price)
         if anchor is not None and int(anchor) == int(strike):
             continue
-        if value is not None and value > above:
+        from iron_fly.strategy.spec import leftover_roll, leftover_stc
+
+        if leftover_roll(auto) and value is not None and value > above:
             target = _forty_strike(chain, right, beyond=strike, target=target_price)
             if target is not None and _roll_leftover(conn, settings, chain, lot, target, when, value):
                 done += 1
                 continue
+        if not leftover_stc(auto):
+            continue
         if bid is None or bid <= 0:
             continue
         if close_leftover_long(conn, settings, chain, str(lot["occ"]), when) is None:

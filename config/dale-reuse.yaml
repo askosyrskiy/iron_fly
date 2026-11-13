@@ -1,0 +1,33 @@
+# Long-reuse variant: close shorts, park wings, asymmetric pool, roll-only leftovers.
+f1_at: "10:30"
+f1_below: 83
+wings: 50
+regime: "±25/30"
+stop: 0
+em_regime: false
+em_latch: true
+credit_regime: true
+cookies_below: 50
+cookies_min_flies: 1
+follow_wings: true
+wing_steps: [50, 20]
+add_until: "16:00"
+close_mode: straddle_only
+pool_reuse: asymmetric
+leftover_stc: false
+leftover_roll: false
+leftover_until: "16:00"
+roll_above: 1.00
+roll_to: 0.40
+fill_mode_open: bid
+fill_mode_close: ask
+picks:
+  - at_em_pct: 70
+    regime_down: 1
+  - at_em_pct: 60
+    regime_down: 1
+  - at_time: "15:00"
+    stop: 1
+    wings: 20
+  - at_time: "15:50"
+    stop: 2

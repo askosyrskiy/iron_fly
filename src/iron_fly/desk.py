@@ -29,6 +29,7 @@ from iron_fly.orders import (
     leftovers_sell_allowed,
     live_wing_bids,
     park_lots,
+    park_wings,
     parked_cash_points,
     parked_long_value,
     priced_short_conflicts,
@@ -40,6 +41,7 @@ from iron_fly.orders import (
     widen_blocked_open,
     release_longs,
     reusable_wing_lots,
+    wing_spans_from_lots,
     sell_ready_leftovers,
     settle_parked_longs,
     short_mark,
@@ -592,8 +594,12 @@ def open_strike(
     conflict, wing_sales = priced_short_conflicts(conn, chain, strike)
     if conflict:
         return _skip_open(conn, book, clock, strike, requested, conflict)
-    reused = reusable_wing_lots(conn, chain, strike, width, call_w)
+    auto = _auto_rules(conn)
+    reused = reusable_wing_lots(
+        conn, chain, strike, width, call_w, active=book.active(), auto=auto
+    )
     if reused is not None:
+        width, call_w = wing_spans_from_lots(strike, reused)
         rejected, fill = _send_open_shorts(settings, conn, chain, strike)
         if rejected:
             return rejected
@@ -814,8 +820,21 @@ def pause_auto_open(conn: sqlite3.Connection) -> None:
     )
 
 
+def _auto_rules(conn) -> dict[str, object]:
+    spec = _saved_spec(conn)
+    return dict(spec.auto) if spec is not None else {}
+
+
+def policy_close_mode(conn) -> str:
+    from iron_fly.strategy.spec import close_mode
+
+    return close_mode(_auto_rules(conn))
+
+
 def _close_open_fly(conn, settings: Settings, book: FlyBook, fly, chain, clock: datetime) -> str | None:
     """4-leg close, or BTC the shorts and sell each wing that still has a bid."""
+    if policy_close_mode(conn) == "straddle_only":
+        return _close_straddle_park_book(conn, settings, book, fly, chain, clock)
     put_w, call_w = fly_spans(fly)
     notes = dead_wings(chain, fly.strike, put_w, call_w)
     if notes:
@@ -854,6 +873,28 @@ def _close_open_fly(conn, settings: Settings, book: FlyBook, fly, chain, clock: 
     if not notes:
         note_event(conn, clock, f"Closed fly {int(fly.strike)} at {float(debit):.2f}")
     book.close_fly(fly.strike, debit, clock)
+    save_book(conn, book)
+    return None
+
+
+def _close_straddle_park_book(
+    conn, settings: Settings, book: FlyBook, fly, chain, clock: datetime
+) -> str | None:
+    put_w, call_w = fly_spans(fly)
+    rejected = _send_shorts(settings, conn, chain, fly.strike)
+    if rejected:
+        return rejected
+    _, close_fill = _fill_modes(conn)
+    debit = short_mark(chain, fly.strike, mode=close_fill)
+    if debit is None:
+        return "nomid"
+    lots = park_wings(conn, chain, fly.strike, put_w, call_wings=call_w)
+    note_event(conn, clock, f"Closed straddle {int(fly.strike)}")
+    if lots:
+        strikes = " ".join(str(int(float(lot["strike"]))) for lot in lots)
+        note_event(conn, clock, f"Parked longs {strikes}")
+    debit = _add_close_slippage(conn, clock, float(debit), _SHORT_LEGS) or float(debit)
+    book.close_fly(fly.strike, float(debit), clock)
     save_book(conn, book)
     return None
 
@@ -2166,7 +2207,12 @@ def _fill_intent(
             record_open_blocked(conn, ts, strike, requested, conflict, strategy.book.active())
             log.info("step %s fill open %s skipped %s", clock, int(strike), conflict)
             return False
-        reused = reusable_wing_lots(conn, chain, strike, width, call_w)
+        auto = _auto_rules(conn)
+        reused = reusable_wing_lots(
+            conn, chain, strike, width, call_w, active=strategy.book.active(), auto=auto
+        )
+        if reused is not None:
+            width, call_w = wing_spans_from_lots(strike, reused)
         # Backtest books the chain mid. Refuse (and retry next tick) until every
         # leg is quoted — never STO at the 0.01 penny placeholder.
         if settings.desk_mode in BACKTEST_MODES:
@@ -2279,6 +2325,9 @@ def _fill_intent(
         fly = next((item for item in strategy.book.active() if item.strike == strike), None)
         if fly is None:
             return False
+        if policy_close_mode(conn) == "straddle_only":
+            code = _close_straddle_park_book(conn, settings, strategy.book, fly, chain, ts)
+            return not code
         width, call_w = fly_spans(fly)
         if dead_wings(chain, strike, width, call_w):
             mark, contracts, rejected, sold = _buy_shorts_sell_live_wings(
