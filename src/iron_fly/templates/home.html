@@ -239,6 +239,11 @@
               <td class="px-3 py-2 tabular-nums">±25</td>
               <td class="px-3 py-2">30 points</td>
             </tr>
+            <tr data-band="s6" class="border-t border-line{% if model.regime == 's6' %} text-accent{% endif %}">
+              <td class="px-3 py-2 tabular-nums">$35+</td>
+              <td class="px-3 py-2 tabular-nums">±30</td>
+              <td class="px-3 py-2">35 points</td>
+            </tr>
             <tr data-band="ladder" class="border-t border-line{% if model.regime == 'ladder' %} text-accent{% endif %}">
               <td class="px-3 py-2">Ladder</td>
               <td class="px-3 py-2 tabular-nums">±2.5</td>
@@ -327,7 +332,7 @@
             Regime
             <select name="regime" class="h-8 rounded-lg border border-line bg-bg px-2 text-sm text-ink disabled:opacity-50" aria-label="Add regime" {% if model.use_config %}disabled{% endif %}>
               {% for name in model.regimes %}
-              <option value="{{ name }}"{% if model.regime == name %} selected{% endif %}>{{ {"s1": "±7.5 / 10", "s2": "±10 / 15", "s3": "±15 / 20", "s4": "±20 / 25", "s5": "±25 / 30", "ladder": "±2.5 / 5", "cookies": "Cookies ±2.5 / 5"}[name] }}</option>
+              <option value="{{ name }}"{% if model.regime == name %} selected{% endif %}>{{ {"s1": "±7.5 / 10", "s2": "±10 / 15", "s3": "±15 / 20", "s4": "±20 / 25", "s5": "±25 / 30", "s6": "±30 / 35", "ladder": "±2.5 / 5", "cookies": "Cookies ±2.5 / 5"}[name] }}</option>
               {% endfor %}
             </select>
           </label>
