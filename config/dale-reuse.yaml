@@ -1,13 +1,13 @@
 # Long-reuse variant: close shorts, park wings, asymmetric pool, roll-only leftovers.
 f1_at: "10:30"
-f1_below: 83
+f1_below_em_pct: 83
 wings: 50
 regime: "±25/30"
 stop: 0
 em_regime: false
 em_latch: true
 credit_regime: true
-cookies_below: 50
+cookies_below_em_pct: 50
 cookies_min_flies: 1
 follow_wings: true
 wing_steps: [50, 20]

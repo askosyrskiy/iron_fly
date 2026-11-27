@@ -1,13 +1,13 @@
 # 2026-10-29, driven by EM. A step stays on after the reading bounces.
 f1_at: "10:00"              # first fly once the clock arrives
-f1_below: 85 
+f1_below_em_pct: 85 
 wings: 50                   # hold 50 until EM trades under 7.20
 regime: "±20/25"            # while EM holds 26.50 or higher
 stop: 0
 em_regime: false            # the bands below are this day's steps, not the credit table
 em_latch: true              # tighter regime, stop, and wings stay after a bounce
 credit_regime: true
-cookies_below: 50           # cookies once EM% is under 50, then stay there
+cookies_below_em_pct: 50           # cookies once EM% is under 50, then stay there
 cookies_min_flies: 1
 follow_wings: true         # width comes from the 7.20 step, not the 0.40 put
 wing_steps: [50, 20]

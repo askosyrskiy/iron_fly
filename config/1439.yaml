@@ -1,12 +1,12 @@
 f1_at: "14:39"              # open the first fly at this clock
-f1_below: 83                # AND below this EM%, open the first fly
+f1_below_em_pct: 83                # AND below this EM%, open the first fly
 wings: 50                   # starting width; later steps can only narrow it
 regime: "±25/30"            # grid until EM is published
 stop: 0                     # drop at the credit breakeven (K ± credit)
 em_regime: false            # current EM $ picks the row, and can widen again
 em_latch: true              # regime_down stays after EM% bounces above the pick
 credit_regime: true         # after a 50-wide fill, the grid follows that credit
-cookies_below: 50           # under this EM%, switch to cookies and stay there
+cookies_below_em_pct: 50           # under this EM%, switch to cookies and stay there
 cookies_min_flies: 1        # need this many open flies to enter cookies
 follow_wings: true          # from 9:35, width tracks the 0.40 put and never widens
 wing_steps: [50, 20]        # widths follow_wings may snap to

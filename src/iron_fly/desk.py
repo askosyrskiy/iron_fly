@@ -56,7 +56,7 @@ from iron_fly.quotes.replay import (
 )
 from iron_fly.quotes.symbols import spxw_symbol
 from iron_fly.strategy.book import FlyBook
-from iron_fly.strategy.config_state import ConfigState, apply_config_state, pick_is_on, slippage_now
+from iron_fly.strategy.config_state import ConfigState, apply_config_state, cookies_on, pick_is_on, slippage_now
 from iron_fly.strategy.dale_og import TRADE_STOP, DaleOg
 from iron_fly.strategy.rules import (
     REGIME_LABELS,
@@ -1453,19 +1453,31 @@ def _watch_trace(rows: list) -> str:
 def _config_trace(spec: DeskSpec | None, book: FlyBook, width: str, point: dict) -> str:
     regime = REGIME_LABELS.get(book.regime, book.regime)
     base = f"regime={regime} stop=+{book.stop_pad} wings={width}"
-    if spec is None or "cookies_below" not in spec.auto:
+    if spec is None:
         return base + " cookies=off"
-    limit = float(spec.auto["cookies_below"])
+    dollar = spec.auto.get("cookies_below_em")
+    percent = spec.auto.get("cookies_below_em_pct")
+    if dollar is None and percent is None:
+        return base + " cookies=off"
     need = int(spec.auto.get("cookies_min_flies") or 0)
+    em = point.get("em")
     pct = point.get("pct")
     open_n = len(book.active())
-    if pct is None:
-        rule = "no-em"
-    elif float(pct) < limit and open_n >= need:
+    em_now = None if em is None else float(em)
+    em_pct = None if pct is None else float(pct)
+    present = (dollar is not None and em_now is not None) or (percent is not None and em_pct is not None)
+    if cookies_on(spec.auto, em_pct=em_pct, em_now=em_now, open_flies=open_n):
         rule = "met"
+    elif not present:
+        rule = "no-em"
     else:
         rule = "waiting"
-    return f"{base} cookies_below={limit:g} em%={pct} open={open_n} min={need} rule={rule}"
+    cuts = []
+    if dollar is not None:
+        cuts.append(f"cookies_below_em={float(dollar):g}")
+    if percent is not None:
+        cuts.append(f"cookies_below_em_pct={float(percent):g}")
+    return f"{base} {' '.join(cuts)} em={em} em%={pct} open={open_n} min={need} rule={rule}"
 
 
 def tape_seconds(points: list, after: int | None, until: int) -> list[dict]:
@@ -1966,7 +1978,15 @@ def session_step(conn: sqlite3.Connection, settings: Settings, marks: DeskMarks)
         width_choice = spec.wings if spec is not None else str(load_wings(conn))
         if spec is not None and spec.desk != "auto":
             width_choice = spec.wings
-        _arm_clocks(strategy, spec, auto_open=bool(engine["auto_open"]), em_pct=marks.em_pct, wall=wall, book=book)
+        _arm_clocks(
+            strategy,
+            spec,
+            auto_open=bool(engine["auto_open"]),
+            em_pct=marks.em_pct,
+            em_now=marks.em_now,
+            wall=wall,
+            book=book,
+        )
         if spec is not None:
             state = apply_config_state(
                 spec,
@@ -2041,6 +2061,7 @@ def _arm_clocks(
     *,
     auto_open: bool,
     em_pct: float | None = None,
+    em_now: float | None = None,
     wall: time | None = None,
     book: FlyBook | None = None,
 ) -> None:
@@ -2053,7 +2074,7 @@ def _arm_clocks(
     raw = spec.auto.get("flatten_at")
     strategy.flatten_at = time.fromisoformat(str(raw)) if raw else None
     if auto_open and book is not None and wall is not None:
-        strategy.f1_at = _f1_at(spec, book, em_pct, wall)
+        strategy.f1_at = _f1_at(spec, book, em_pct, wall, em_now)
     elif auto_open and spec.f1_at is not None:
         strategy.f1_at = spec.f1_at
 

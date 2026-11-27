@@ -4,7 +4,7 @@ Docker-first **Dale's** SPX 0DTE iron-fly **backtest** desk and CLI.
 Inspired by [Dale's iron fly on YouTube](https://www.youtube.com/watch?v=kNR2r8Nj3qI).
 
 Strategy rules come from
-[`iron_fly_strategy@v0.1.17`](https://github.com/askosyrskiy/iron_fly_strategy).
+[`iron_fly_strategy@v0.1.20`](https://github.com/askosyrskiy/iron_fly_strategy).
 Session tapes are gzipped on Cloudflare R2 (~1.5 MB/day). Each day file stores
 **SPX prints every 1 second** and the **option chain every 2 seconds**.
 
@@ -26,7 +26,7 @@ Default configuration is `config/default.yaml` (paste/Apply in **Configuration**
 ```bash
 cp .env.example .env
 python3.12 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"   # pulls iron-fly-strategy@v0.1.17 from GitHub
+pip install -e ".[dev]"   # pulls iron-fly-strategy@v0.1.20 from GitHub
 
 make run-local            # hydrate last 10 days from R2, then serve
 # open http://localhost:8000
@@ -198,13 +198,13 @@ Shipped default (see the file for the live copy):
 
 ```yaml
 f1_at: "10:40"              # open the first fly at this clock
-f1_below: 80                # AND below this EM%, open the first fly
+f1_below_em_pct: 80         # AND below this EM%, open the first fly
 wings: 50                   # starting width; later steps can only narrow it
 regime: "±15/20"            # grid until EM is published
 stop: 0                     # drop at the credit breakeven (K ± credit)
 em_regime: true             # current EM $ picks the row, and can widen again
 credit_regime: false        # the fill credit no longer sets the grid
-cookies_below: 50           # under this EM%, switch to the tight cookies grid
+cookies_below_em_pct: 50    # under this EM%, switch to the tight cookies grid
 cookies_min_flies: 1        # cookies only while at least this many flies are open
 follow_wings: true          # from 9:35, width tracks the 0.40 put and never widens
 wing_steps: [50, 30, 20]    # widths follow_wings may snap to
@@ -229,7 +229,8 @@ Copy and edit this file (or add siblings under `config/`) for different desks.
 | Field | Values | Meaning |
 |---|---|---|
 | `f1_at` | `HH:MM` or omit/empty | Earliest clock for the first fly. Omit → wait for a manual click (live desk). |
-| `f1_below` | number (EM%) | First fly also needs EM% **below** this. |
+| `f1_below_em` | number (EM $) | First fly also needs EM $ **below** this. Either this or `f1_below_em_pct` is enough. |
+| `f1_below_em_pct` | number (EM%) | First fly also needs EM% **below** this. |
 | `wings` | `auto`, `50`, `40`, `30`, `25`, `20`, `15`, `10` | Starting wing width. Later rules may only **narrow**. `auto` follows the time-of-day ladder. |
 | `regime` | see regimes below | Starting add/drop grid (watch / add spacing). |
 | `stop` | integer `0`–`20` | Extra points beyond credit breakeven (`K ± credit`). `0` = drop at breakeven. |
@@ -260,7 +261,8 @@ These may sit at the top level (preferred) or under a legacy nested `auto:` bloc
 | `credit_regime` | `true` / `false` | After a **50-wide** fill, snap the grid from that credit band (s1–s5). Cannot go wider than the desk `regime` / `regime_max`. Ignored on a print where `em_regime` has a current EM $. |
 | `em_regime` | `true` / `false` | Current EM $ picks the same rows as the credit table, and the next print may widen. Under $15 → ±7.5/10, $15–$19 → ±10/15, under $24.90 → ±15/20, $24.90–$29.99 → ±20/25, $30 and above → ±25/30. The desk `regime` cap does not apply. Before the open EM is published, the desk `regime` stays. |
 | `regime_max` | regime label/code | Cap how wide credit-regime may go. |
-| `cookies_below` | number (EM%) | Switch to cookies while EM% is under this. |
+| `cookies_below_em` | number (EM $) | Switch to cookies while EM $ is under this. Either this or `cookies_below_em_pct` is enough. |
+| `cookies_below_em_pct` | number (EM%) | Switch to cookies while EM% is under this. |
 | `cookies_min_flies` | whole number ≥ 0 | Cookies only if at least this many flies are open. |
 | `follow_wings` | `true` / `false` | From 9:35 ET, snap width from the ~0.40 put; never widen. |
 | `wing_steps` | list of widths (not `auto`) | Allowed snaps for `follow_wings`, e.g. `[50, 30, 20]`. |
